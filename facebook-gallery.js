@@ -2,10 +2,10 @@ class FacebookGallery {
   static id = "facebook-gallery";
 
   static isMatch() {
-    return window.location.href.includes("facebook.com");
+    const u = location.href;
+    return u.includes("facebook.com/") && (u.includes("/posts/") || u.includes("/pfbid"));
   }
 
-  // per docs, init should return an object (often empty)
   static init() {
     return {};
   }
@@ -14,40 +14,106 @@ class FacebookGallery {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const log = (msg) => console.log("[facebook-gallery]", msg);
 
-    // give FB time to render post content
-    await sleep(5000);
+    // Helper: click first element that exists
+    const clickFirst = (...selectors) => {
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el) {
+          el.click();
+          return true;
+        }
+      }
+      return false;
+    };
 
-    // Try to click something that actually opens the viewer:
-    // clicking <img> often does nothing; click nearest link-like ancestor
-    const img = document.querySelector("div[role='main'] img");
-    const clickable = img?.closest("a, div[role='link'], div[role='button']");
+    // Helper: try to close common overlays (best-effort)
+    const dismissOverlays = async () => {
+      // Cookie/login/“not now” style dialogs vary; try common buttons by text
+      const norm = (s) => (s || "").trim().replace(/\s+/g, " ").toLowerCase();
+      const buttons = Array.from(document.querySelectorAll("button,[role='button']"));
+      for (const b of buttons) {
+        const t = norm(b.textContent);
+        if (
+          t.includes("accept") ||
+          t.includes("allow") ||
+          t.includes("agree") ||
+          t.includes("not now") ||
+          t.includes("close") ||
+          t.includes("ok")
+        ) {
+          try { b.click(); log("Clicked overlay button: " + t); } catch {}
+          await sleep(1500);
+          return;
+        }
+      }
+    };
 
-    if (clickable) {
-      clickable.click();
-      log("Opened gallery/lightbox");
-      await sleep(3000);
-    } else {
-      log("No clickable image found");
+    // Wait for main content to render
+    for (let i = 0; i < 20; i++) {
+      if (document.querySelector("div[role='main']")) break;
+      yield; await sleep(500);
+    }
+
+    // Try dismiss overlays a couple times (if present)
+    for (let i = 0; i < 3; i++) {
+      await dismissOverlays();
+      yield; await sleep(800);
+    }
+
+    // Find a likely post image within the main area
+    // Strategy:
+    // 1) find an img
+    // 2) click a clickable ancestor (a / role=link / role=button)
+    const main = document.querySelector("div[role='main']");
+    if (!main) {
+      log("No main content found");
       return;
     }
 
-    // Advance through images in the lightbox
-    for (let i = 0; i < 50; i++) {
-      const next =
-        document.querySelector("[aria-label='Next photo']") ||
-        document.querySelector("[aria-label='Next']");
-
-      if (!next) {
-        log("No more images at step: " + i);
-        break;
-      }
-
-      next.click();
-      log("Clicked next: " + (i + 1));
-      yield;
-      await sleep(2500);
+    const img = main.querySelector("img");
+    if (!img) {
+      log("No image found in post");
+      return;
     }
 
-    log("Gallery done");
+    const clickable =
+      img.closest("a") ||
+      img.closest("div[role='link']") ||
+      img.closest("div[role='button']");
+
+    if (!clickable) {
+      log("Found img but no clickable ancestor");
+      return;
+    }
+
+    clickable.click();
+    log("Clicked post image to open viewer");
+    await sleep(3000);
+
+    // Now we should be in the viewer/lightbox. Click next up to N times.
+    // FB uses different aria-labels; try several.
+    const nextSelectors = [
+      "[aria-label='Next photo']",
+      "[aria-label='Next']",
+      "[aria-label='Next image']",
+      "[aria-label='Next item']",
+      "div[role='button'][aria-label='Next photo']",
+    ];
+
+    for (let i = 0; i < 30; i++) {
+      // Give viewer time to load
+      yield; await sleep(1200);
+
+      const next = nextSelectors.map((s) => document.querySelector(s)).find(Boolean);
+      if (!next) {
+        log("No next button found; stopping at step " + i);
+        break;
+      }
+      next.click();
+      log("Clicked next: " + (i + 1));
+      yield; await sleep(2000);
+    }
+
+    log("Done");
   }
 }
