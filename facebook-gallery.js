@@ -1,5 +1,5 @@
 class FacebookGallery {
-  static id = "facebook-gallery";
+  static id = "Facebook";
 
   static isMatch() {
     const u = location.href;
